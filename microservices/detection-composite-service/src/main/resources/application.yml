@@ -1,0 +1,50 @@
+server.port: 7006
+server.error.include-message: always
+
+springdoc:
+  swagger-ui.path: /openapi/swagger-ui.html
+  api-docs.path: /openapi/v3/api-docs
+  packagesToScan: se.magnus.microservices.composite.detection
+  pathsToMatch: /**
+
+app:
+  lpr-service:
+    host: localhost
+    port: 7004
+  reid-service:
+    host: localhost
+    port: 7007
+
+api:
+  common:
+    version: 1.0.0
+    title: Detection Composite Service API
+    description: REST API for aggregating detection data from multiple services
+    termsOfService: MY TERMS OF SERVICE
+    license: MY LICENSE
+    licenseUrl: MY LICENSE URL
+    externalDocDesc: MY WIKI PAGE
+    externalDocUrl: MY WIKI URL
+    contact:
+      name: NAME OF CONTACT
+      url: URL TO CONTACT
+      email: contact@mail.com
+
+logging:
+  level:
+    root: INFO
+    se.magnus: DEBUG
+
+---
+spring.config.activate.on-profile: docker
+
+server.port: 8080
+
+app:
+  lpr-service:
+    host: lpr
+    port: 8080
+  reid-service:
+    host: reid
+    port: 8080
+

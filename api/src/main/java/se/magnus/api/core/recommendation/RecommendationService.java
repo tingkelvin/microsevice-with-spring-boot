@@ -1,12 +1,10 @@
 package se.magnus.api.core.recommendation;
 
-import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
+import java.util.List;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 
 public interface RecommendationService {
-
-  Mono<Recommendation> createRecommendation(Recommendation body);
 
   /**
    * Sample usage: "curl $HOST:$PORT/recommendation?productId=1".
@@ -17,8 +15,6 @@ public interface RecommendationService {
   @GetMapping(
     value = "/recommendation",
     produces = "application/json")
-  Flux<Recommendation> getRecommendations(
+  List<Recommendation> getRecommendations(
     @RequestParam(value = "productId", required = true) int productId);
-
-  Mono<Void> deleteRecommendations(int productId);
 }
