@@ -3,6 +3,7 @@ package se.magnus.microservices.composite.detection.services;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.util.List;
+import java.util.logging.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +14,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientException;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import se.magnus.api.core.lpr.LicencePlate;
 import se.magnus.api.core.lpr.LprService;
 import se.magnus.api.core.reid.Reid;
@@ -26,7 +31,7 @@ public class DetectionCompositeIntegration implements LprService, ReidService {
 
   private static final Logger LOG = LoggerFactory.getLogger(DetectionCompositeIntegration.class);
 
-  private final RestTemplate restTemplate;
+  private final WebClient webClient;
   private final ObjectMapper mapper;
 
   private final String lprDetectionsUrl;
@@ -35,14 +40,15 @@ public class DetectionCompositeIntegration implements LprService, ReidService {
 
   @Autowired
   public DetectionCompositeIntegration(
-    RestTemplate restTemplate,
+    WebClient.Builder webClient,
     ObjectMapper mapper,
-    @Value("${app.lpr-service.host}") String lprServiceHost,
-    @Value("${app.lpr-service.port}") int lprServicePort,
-    @Value("${app.reid-service.host}") String reidServiceHost,
-    @Value("${app.reid-service.port}") int reidServicePort) {
+      @Value("${app.lpr-service.host}") String lprServiceHost,
+      @Value("${app.lpr-service.port}") int lprServicePort,
+      @Value("${app.reid-service.host}") String reidServiceHost,
+      @Value("${app.reid-service.port}") int reidServicePort
+    ) {
 
-    this.restTemplate = restTemplate;
+    this.webClient = webClient.build();
     this.mapper = mapper;
 
     lprDetectionsUrl = "http://" + lprServiceHost + ":" + lprServicePort + "/lpr/detections/";
@@ -88,51 +94,40 @@ public class DetectionCompositeIntegration implements LprService, ReidService {
   }
 
   @Override
-  public List<Reid> getReids(String sourceId) {
-    try {
-      String url = reidServiceUrl + sourceId;
-      LOG.debug("Will call Reid getDetections API on URL: {}", url);
-      
-      List<Reid> reids = restTemplate.exchange(
-        url,
-        HttpMethod.GET,
-        null,
-        new ParameterizedTypeReference<List<Reid>>() {}
-      ).getBody();
-      
-      LOG.debug("Found {} Reid detections for sourceId: {}", reids != null ? reids.size() : 0, sourceId);
-      
-      return reids;
-
-    } catch (HttpClientErrorException ex) {
-      throw handleHttpClientException(ex);
-    }
+  public Flux<Reid> getReids(String sourceId) {
+    String url = reidServiceUrl + sourceId;
+    LOG.debug("Will call Reid getReids API on URL: {}", url);
+    
+    return webClient.get().uri(url)
+      .retrieve().bodyToFlux(Reid.class)
+      .log(LOG.getName(), Level.FINE)
+      .onErrorMap(WebClientException.class, ex -> handleWebClientException(ex));
   }
 
   @Override
-  public Reid createReid(Reid body) {
-    try {
-      String url = reidServiceUrl;
-      LOG.debug("Will call Reid createReid API on URL: {}", url);
-      
-      return restTemplate.postForObject(url, body, Reid.class);
-      
-    } catch (HttpClientErrorException ex) {
-      throw handleHttpClientException(ex);
-    }
+  public Mono<Reid> createReid(Mono<Reid> body) {
+    String url = reidServiceUrl;
+    LOG.debug("Will call Reid createReid API on URL: {}", url);
+    
+    return body.flatMap(reid -> 
+      webClient.post().uri(url)
+        .bodyValue(reid)
+        .retrieve()
+        .bodyToMono(Reid.class)
+        .onErrorMap(WebClientException.class, ex -> handleWebClientException(ex))
+    );
   }
 
   @Override
-  public void deleteReids(String sourceId) {
-    try {
-      String url = reidServiceUrl + sourceId;
-      LOG.debug("Will call Reid deleteReids API on URL: {}", url);
-      
-      restTemplate.delete(url);
-      
-    } catch (HttpClientErrorException ex) {
-      throw handleHttpClientException(ex);
-    }
+  public Mono<Void> deleteReids(String sourceId) {
+    String url = reidServiceUrl + sourceId;
+    LOG.debug("Will call Reid deleteReids API on URL: {}", url);
+    
+    return webClient.delete().uri(url)
+      .retrieve()
+      .bodyToMono(Void.class)
+      .onErrorMap(WebClientException.class, ex -> handleWebClientException(ex))
+      .then();
   }
 
   private RuntimeException handleHttpClientException(HttpClientErrorException ex) {
@@ -148,6 +143,17 @@ public class DetectionCompositeIntegration implements LprService, ReidService {
           LOG.warn("Error body: {}", ex.getResponseBodyAsString());
         return ex;
       }
+  }
+
+  private RuntimeException handleWebClientException(WebClientException ex) {
+    LOG.warn("Got a WebClient error: {}, will rethrow it", ex.getMessage());
+    if (ex.getMessage() != null && ex.getMessage().contains("404")) {
+      return new NotFoundException(ex.getMessage());
+    }
+    if (ex.getMessage() != null && ex.getMessage().contains("422")) {
+      return new InvalidInputException(ex.getMessage());
+    }
+    return ex;
   }
 
   private String getErrorMessage(HttpClientErrorException ex) {

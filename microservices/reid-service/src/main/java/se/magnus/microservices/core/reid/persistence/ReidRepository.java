@@ -1,11 +1,10 @@
 package se.magnus.microservices.core.reid.persistence;
 
-import java.util.List;
-import org.springframework.data.repository.CrudRepository;
-import org.springframework.data.repository.PagingAndSortingRepository;
+import org.springframework.data.repository.reactive.ReactiveCrudRepository;
+import reactor.core.publisher.Flux;
 
-public interface ReidRepository extends PagingAndSortingRepository<ReidEntity, String>, CrudRepository<ReidEntity, String> {
+public interface ReidRepository extends ReactiveCrudRepository<ReidEntity, String> {
 
-  List<ReidEntity> findBySourceId(String sourceId);
+  Flux<ReidEntity> findBySourceId(String sourceId);
 }
 

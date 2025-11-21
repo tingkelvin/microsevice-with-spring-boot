@@ -1,6 +1,10 @@
 package se.magnus.microservices.core.reid.services;
 
-import java.util.List;
+import static java.util.logging.Level.FINE;
+
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +16,8 @@ import se.magnus.api.exceptions.InvalidInputException;
 import se.magnus.microservices.core.reid.persistence.ReidEntity;
 import se.magnus.microservices.core.reid.persistence.ReidRepository;
 import se.magnus.util.http.ServiceUtil;
+
+import se.magnus.api.exceptions.NotFoundException;
 
 @RestController
 public class ReidServiceImpl implements ReidService {
@@ -30,58 +36,42 @@ public class ReidServiceImpl implements ReidService {
   }
 
   @Override
-  public List<Reid> getReids(String sourceId) {
+  public Flux<Reid> getReids(String sourceId) {
     LOG.debug("/reid return the detections data for sourceId={}", sourceId);
 
     if (sourceId == null || sourceId.isEmpty()) {
       throw new InvalidInputException("Invalid sourceId: " + sourceId);
     }
 
-    List<ReidEntity> entityList = repository.findBySourceId(sourceId);
-    List<Reid> list = entityList.stream()
-      .map(e -> {
-        Reid api = mapper.entityToApi(e);
-        api.setServiceAddress(serviceUtil.getServiceAddress());
-        return api;
-      })
-      .toList();
-
-    LOG.debug("getDetections: response size: {}", list.size());
-
-    return list;
+    return repository.findBySourceId(sourceId)
+      .switchIfEmpty(Mono.error(new NotFoundException("No reid found for sourceId: " + sourceId)))
+      .log(LOG.getName(), FINE)
+      .map(e -> mapper.entityToApi(e))
+      .map(e -> setServiceAddress(e));
   }
 
   @Override
-  public Reid createReid(Reid body) {
+  public Mono<Reid> createReid(Reid body) {
+
     if (body.getSourceId() == null || body.getSourceId().isEmpty()) {
       throw new InvalidInputException("Invalid sourceId: " + body.getSourceId());
     }
 
-    try {
-      ReidEntity entity = mapper.apiToEntity(body);
-      ReidEntity newEntity = repository.save(entity);
+    ReidEntity entity = mapper.apiToEntity(body);
 
-      LOG.debug("createReid: created reid entity: {}/{}", body.getSourceId(), body.getReid());
+    Mono<Reid> newEntity = repository.save(entity)
+      .log(LOG.getName(), FINE)
+      .onErrorMap(
+        DuplicateKeyException.class,
+        ex -> new InvalidInputException("Duplicate key, Source Id: " + body.getSourceId() + ", Reid Id: " + body.getReid()))
+      .map(e -> mapper.entityToApi(e));
 
-      Reid api = mapper.entityToApi(newEntity);
-      api.setServiceAddress(serviceUtil.getServiceAddress());
-      return api;
-
-    } catch (DuplicateKeyException dke) {
-      throw new InvalidInputException("Duplicate key, Source Id: " + body.getSourceId() + ", Reid Id: " + body.getReid());
-    }
+    return newEntity;
   }
 
-  @Override
-  public void deleteReids(String sourceId) {
-    if (sourceId == null || sourceId.isEmpty()) {
-      throw new InvalidInputException("Invalid sourceId: " + sourceId);
-    }
-
-    LOG.debug("deleteReids: tries to delete reids for sourceId: {}", sourceId);
-    
-    List<ReidEntity> entities = repository.findBySourceId(sourceId);
-    repository.deleteAll(entities);
+  private Reid setServiceAddress(Reid entity) {
+    entity.setServiceAddress(serviceUtil.getServiceAddress());
+    return entity;
   }
 }
 
