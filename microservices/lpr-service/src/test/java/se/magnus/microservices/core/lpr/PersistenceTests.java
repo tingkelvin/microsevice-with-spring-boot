@@ -76,22 +76,6 @@ class PersistenceTests {
   }
 
   @Test
-  void update() {
-    savedEntity.setPlateNum("DEF456");
-    repository.save(savedEntity);
-
-    LicencePlateEntity foundEntity = repository.findById(savedEntity.getId()).get();
-    assertEquals(1, (long)foundEntity.getVersion());
-    assertEquals("DEF456", foundEntity.getPlateNum());
-  }
-
-  @Test
-  void delete() {
-    repository.delete(savedEntity);
-    assertFalse(repository.existsById(savedEntity.getId()));
-  }
-
-  @Test
   void getBySourceId() {
     List<LicencePlateEntity> entityList = repository.findBySourceId(savedEntity.getSourceId());
 

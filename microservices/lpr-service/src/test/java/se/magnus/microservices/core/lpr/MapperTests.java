@@ -28,7 +28,8 @@ class MapperTests {
       plateBbox,
       "ABC123",
       "2025-11-11T10:30:00Z",
-      1699614600000L
+      1699614600000L,
+      null  // serviceAddress - not set in mapper test
     );
 
     // Convert API to Entity
@@ -92,7 +93,8 @@ class MapperTests {
       null,
       "XYZ789",
       "2025-11-11T11:00:00Z",
-      1699618200000L
+      1699618200000L,
+      null  // serviceAddress - not set in mapper test
     );
 
     // Convert API to Entity

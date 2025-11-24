@@ -14,6 +14,7 @@ public interface LprMapper {
   @Mapping(target = "version", ignore = true)
   LicencePlateEntity apiToEntity(LicencePlate api);
 
+  @Mapping(target = "serviceAddress", ignore = true)
   LicencePlate entityToApi(LicencePlateEntity entity);
 
   // Helper methods for BoundingBox conversion

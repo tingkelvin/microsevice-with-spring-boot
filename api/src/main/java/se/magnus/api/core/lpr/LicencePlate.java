@@ -15,5 +15,6 @@ public class LicencePlate {
   private String plateNum;
   private String ntpTime;
   private long unixTime;
+  private String serviceAddress;
 }
 

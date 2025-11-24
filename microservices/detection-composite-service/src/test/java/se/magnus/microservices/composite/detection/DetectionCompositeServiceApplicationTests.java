@@ -15,6 +15,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.web.reactive.server.WebTestClient;
+import reactor.core.publisher.Flux;
 import se.magnus.api.core.lpr.BoundingBox;
 import se.magnus.api.core.lpr.LicencePlate;
 import se.magnus.api.core.reid.Reid;
@@ -48,20 +49,25 @@ class DetectionCompositeServiceApplicationTests {
       plateBbox,
       "ABC123",
       "2025-11-10T10:30:00Z",
-      1699614600000L));
-    when(integration.getLprs(SOURCE_ID_OK)).thenReturn(plates);
+      1699614600000L,
+      "mock-service-address"));
+    when(integration.getLprs(SOURCE_ID_OK)).thenReturn(Flux.fromIterable(plates));
 
     List<Reid> reids = singletonList(
       new Reid("reid-001", SOURCE_ID_OK, "ABC123", 1699614600000L, "Location-1", "active", "mock-address"));
-    when(integration.getReids(SOURCE_ID_OK)).thenReturn(reids);
+    when(integration.getReids(SOURCE_ID_OK)).thenReturn(Flux.fromIterable(reids));
 
     // Setup mock for not found case
     when(integration.getLprs(SOURCE_ID_NOT_FOUND))
-      .thenThrow(new NotFoundException("NOT FOUND: " + SOURCE_ID_NOT_FOUND));
+      .thenReturn(Flux.error(new NotFoundException("NOT FOUND: " + SOURCE_ID_NOT_FOUND)));
+    when(integration.getReids(SOURCE_ID_NOT_FOUND))
+      .thenReturn(Flux.empty());
 
     // Setup mock for invalid input case
     when(integration.getLprs(SOURCE_ID_INVALID))
-      .thenThrow(new InvalidInputException("INVALID: " + SOURCE_ID_INVALID));
+      .thenReturn(Flux.error(new InvalidInputException("INVALID: " + SOURCE_ID_INVALID)));
+    when(integration.getReids(SOURCE_ID_INVALID))
+      .thenReturn(Flux.empty());
   }
 
   @Test
@@ -86,9 +92,9 @@ class DetectionCompositeServiceApplicationTests {
       new LicencePlate(sourceId, "uuid-002", 
         new BoundingBox(100, 100, 200, 150),
         new BoundingBox(120, 130, 80, 30),
-        "XYZ789", "2025-11-10T11:00:00Z", 1699616400000L));
-    when(integration.getLprs(sourceId)).thenReturn(plates);
-    when(integration.getReids(sourceId)).thenThrow(new NotFoundException("No reid found"));
+        "XYZ789", "2025-11-10T11:00:00Z", 1699616400000L, "mock-service-address"));
+    when(integration.getLprs(sourceId)).thenReturn(Flux.fromIterable(plates));
+    when(integration.getReids(sourceId)).thenReturn(Flux.error(new NotFoundException("No reid found")));
 
     getAndVerifyDetectionAggregate(sourceId, OK)
       .jsonPath("$.sourceId").isEqualTo(sourceId)
@@ -115,7 +121,8 @@ class DetectionCompositeServiceApplicationTests {
   void getDetectionAggregateEmptyList() {
     String sourceId = "empty-camera";
     
-    when(integration.getLprs(sourceId)).thenReturn(new ArrayList<>());
+    when(integration.getLprs(sourceId)).thenReturn(Flux.empty());
+    when(integration.getReids(sourceId)).thenReturn(Flux.empty());
 
     getAndVerifyDetectionAggregate(sourceId, NOT_FOUND)
       .jsonPath("$.path").isEqualTo("/detection-composite/" + sourceId)

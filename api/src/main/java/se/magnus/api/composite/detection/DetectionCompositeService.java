@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import reactor.core.publisher.Mono;
 
 public interface DetectionCompositeService {
     @Operation(
@@ -25,6 +26,6 @@ public interface DetectionCompositeService {
     @GetMapping(
         value = "/detection-composite/{sourceId}",
         produces = "application/json")
-    DetectionAggregate getDetectionAggregate(@PathVariable String sourceId);
+    Mono<DetectionAggregate> getDetectionAggregate(@PathVariable String sourceId);
 }
 

@@ -1,30 +1,39 @@
 package se.magnus.microservices.composite.detection.services;
 
+import static java.util.logging.Level.FINE;
+import static reactor.core.publisher.Flux.empty;
+import static se.magnus.api.event.Event.Type.CREATE;
+import static se.magnus.api.event.Event.Type.DELETE;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
-import java.util.List;
-import java.util.logging.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.HttpMethod;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.cloud.stream.function.StreamBridge;
 import org.springframework.http.HttpStatus;
+import org.springframework.messaging.Message;
+import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import se.magnus.api.core.lpr.LicencePlate;
-import se.magnus.api.core.lpr.LprService;
-import se.magnus.api.core.reid.Reid;
-import se.magnus.api.core.reid.ReidService;
+import reactor.core.scheduler.Scheduler;
+import se.magnus.api.core.product.Product;
+import se.magnus.api.core.product.ProductService;
+import se.magnus.api.core.recommendation.Recommendation;
+import se.magnus.api.core.recommendation.RecommendationService;
+import se.magnus.api.core.review.Review;
+import se.magnus.api.core.review.ReviewService;
+import se.magnus.api.event.Event;
 import se.magnus.api.exceptions.InvalidInputException;
 import se.magnus.api.exceptions.NotFoundException;
 import se.magnus.util.http.HttpErrorInfo;
+
 
 @Component
 public class DetectionCompositeIntegration implements LprService, ReidService {
@@ -32,16 +41,22 @@ public class DetectionCompositeIntegration implements LprService, ReidService {
   private static final Logger LOG = LoggerFactory.getLogger(DetectionCompositeIntegration.class);
 
   private final WebClient webClient;
-  private final ObjectMapper mapper;
+  ObjectMapper mapper;
 
   private final String lprDetectionsUrl;
   private final String lprDetectionUrl;
   private final String reidServiceUrl;
 
+  private final StreamBridge streamBridge;
+
+  private final Scheduler publishEventScheduler;
+
   @Autowired
   public DetectionCompositeIntegration(
-    WebClient.Builder webClient,
-    ObjectMapper mapper,
+      WebClient.Builder webClient,
+      ObjectMapper objectMapper,
+      StreamBridge streamBridge,
+      @Qualifier("publishEventScheduler") Scheduler publishEventScheduler,
       @Value("${app.lpr-service.host}") String lprServiceHost,
       @Value("${app.lpr-service.port}") int lprServicePort,
       @Value("${app.reid-service.host}") String reidServiceHost,
@@ -49,7 +64,9 @@ public class DetectionCompositeIntegration implements LprService, ReidService {
     ) {
 
     this.webClient = webClient.build();
-    this.mapper = mapper;
+    this.streamBridge = streamBridge;
+    this.publishEventScheduler = publishEventScheduler;
+    this.mapper = objectMapper;
 
     lprDetectionsUrl = "http://" + lprServiceHost + ":" + lprServicePort + "/lpr/detections/";
     lprDetectionUrl = "http://" + lprServiceHost + ":" + lprServicePort + "/lpr/detection";
@@ -57,40 +74,24 @@ public class DetectionCompositeIntegration implements LprService, ReidService {
   }
 
   @Override
-  public List<LicencePlate> getLprs(String sourceId) {
-    try {
-      String url = lprDetectionsUrl + sourceId;
-      LOG.debug("Will call LPR getLprs API on URL: {}", url);
-      
-      List<LicencePlate> detections = restTemplate.exchange(
-        url,
-        HttpMethod.GET,
-        null,
-        new ParameterizedTypeReference<List<LicencePlate>>() {}
-      ).getBody();
-
-      if (detections == null) {
-        detections = List.of();
-      }
-
-      LOG.debug("Found {} LPR detections for sourceId {}", detections.size(), sourceId);
-      return detections;
-
-    } catch (HttpClientErrorException ex) {
-      throw handleHttpClientException(ex);
-    }
+  public Flux<LicencePlate> getLprs(String sourceId) {
+    String url = lprDetectionsUrl + sourceId;
+    LOG.debug("Will call LPR getLprs API on URL: {}", url);
+    
+    return webClient.get().uri(url)
+      .retrieve().bodyToFlux(LicencePlate.class)
+      .log(LOG.getName(), Level.FINE)
+      .onErrorMap(WebClientException.class, ex -> handleWebClientException(ex));
   }
 
   @Override
-  public void createLpr(LicencePlate body) {
-    try {
-      LOG.debug("Will call LPR createLpr API on URL: {}", lprDetectionUrl);
-      
-      restTemplate.postForObject(lprDetectionUrl, body, LicencePlate.class);
-      
-    } catch (HttpClientErrorException ex) {
-      throw handleHttpClientException(ex);
-    }
+  public Mono<LicencePlate> createLpr(LicencePlate body) {
+    LOG.debug("Will call LPR createLpr API on URL: {}", lprDetectionUrl);
+    
+    return Mono.fromCallable(() -> {
+      sendMessage("lpr-out-0", new Event(CREATE, body.getByObjectUuid(), body));
+      return body;
+    }).subscribeOn(publishEventScheduler);
   }
 
   @Override
@@ -105,44 +106,11 @@ public class DetectionCompositeIntegration implements LprService, ReidService {
   }
 
   @Override
-  public Mono<Reid> createReid(Mono<Reid> body) {
-    String url = reidServiceUrl;
-    LOG.debug("Will call Reid createReid API on URL: {}", url);
-    
-    return body.flatMap(reid -> 
-      webClient.post().uri(url)
-        .bodyValue(reid)
-        .retrieve()
-        .bodyToMono(Reid.class)
-        .onErrorMap(WebClientException.class, ex -> handleWebClientException(ex))
-    );
-  }
-
-  @Override
-  public Mono<Void> deleteReids(String sourceId) {
-    String url = reidServiceUrl + sourceId;
-    LOG.debug("Will call Reid deleteReids API on URL: {}", url);
-    
-    return webClient.delete().uri(url)
-      .retrieve()
-      .bodyToMono(Void.class)
-      .onErrorMap(WebClientException.class, ex -> handleWebClientException(ex))
-      .then();
-  }
-
-  private RuntimeException handleHttpClientException(HttpClientErrorException ex) {
-      switch (HttpStatus.resolve(ex.getStatusCode().value())) {
-        case NOT_FOUND:
-        return new NotFoundException(getErrorMessage(ex));
-
-        case UNPROCESSABLE_ENTITY:
-        return new InvalidInputException(getErrorMessage(ex));
-
-        default:
-          LOG.warn("Got an unexpected HTTP error: {}, will rethrow it", ex.getStatusCode());
-          LOG.warn("Error body: {}", ex.getResponseBodyAsString());
-        return ex;
-      }
+  public Mono<Reid> createReid(Reid body) {
+    return Mono.fromCallable(() -> {
+      sendMessage("reid-out-0", new Event(CREATE, body.getByObjectUuid(), body));
+      return body;
+    }).subscribeOn(publishEventScheduler);
   }
 
   private RuntimeException handleWebClientException(WebClientException ex) {
@@ -154,14 +122,6 @@ public class DetectionCompositeIntegration implements LprService, ReidService {
       return new InvalidInputException(ex.getMessage());
     }
     return ex;
-  }
-
-  private String getErrorMessage(HttpClientErrorException ex) {
-    try {
-      return mapper.readValue(ex.getResponseBodyAsString(), HttpErrorInfo.class).getMessage();
-    } catch (IOException ioex) {
-      return ex.getMessage();
-    }
   }
 }
 
